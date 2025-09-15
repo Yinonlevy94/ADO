@@ -1,4 +1,81 @@
-﻿---
-applications:
-- name: hello-world-api
-  memory: 1G
+# manifest.yml — Pipeline #1 (build + version + upload to Azure Artifacts)
+
+name: '$(FullVersion)'
+
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  name: Default   #self-hosted agent pool
+
+variables:
+  # ---- versioning ----
+  SemVerMajorMinor: '1.0'                                 #semver
+  SemVerPatch: $[ counter(variables['SemVerMajorMinor'], 0) ]
+  FullVersion: '$(SemVerMajorMinor).$(SemVerPatch)'
+
+  # ---- build ----
+  BuildConfiguration: 'Release'
+  ProjectDir: 'hello-world-api'
+
+  # ---- artifacts ----
+  ArtifactsFeed: '$(System.TeamProject)/ADO'    
+  PackageId: 'hello-world-api'
+
+steps:
+- checkout: self
+  clean: true
+
+- task: UseDotNet@2
+  displayName: "Install .NET SDK 8.x"
+  inputs:
+    packageType: sdk
+    version: 8.x
+
+- script: dotnet restore "$(ProjectDir)"
+  displayName: "dotnet restore"
+
+- script: dotnet build "$(ProjectDir)" -c $(BuildConfiguration) --no-restore
+  displayName: "dotnet build"
+
+# print the version and set the run name to it (assignment requirement)
+- bash: |
+    echo "====================================="
+    echo "Build Version: $(FullVersion)"
+    echo "====================================="
+    echo "##vso[build.updatebuildnumber]$(FullVersion)"
+  displayName: "Echo version + set build number"
+
+# publish output; disable legacy Razor precompile to avoid .NET 2.0 runtime requirement on ARM
+- bash: |
+    set -euo pipefail
+    CSPROJ=$(find "$(ProjectDir)" -maxdepth 1 -name "*.csproj" | head -n1)
+    if [ -z "$CSPROJ" ]; then
+      echo "no .csproj in $(ProjectDir)" >&2; exit 1
+    fi
+    dotnet publish "$CSPROJ" -c $(BuildConfiguration) \
+      -o "$(Build.ArtifactStagingDirectory)/publish" \
+      -p:MvcRazorCompileOnPublish=false
+    ls -lah "$(Build.ArtifactStagingDirectory)/publish"
+  displayName: "dotnet publish (build output)"
+
+# upload the product to Azure Artifacts as a Universal Package (assignment requirement)
+- task: UniversalPackages@0
+  displayName: "Azure Artifacts (Universal) — publish product"
+  inputs:
+    command: publish
+    publishDirectory: '$(Build.ArtifactStagingDirectory)/publish'
+    vstsFeedPublish: '$(ArtifactsFeed)'        # Project/Feed
+    vstsFeedPackagePublish: '$(PackageId)'
+    versionOption: 'custom'
+    versionPublish: '$(FullVersion)'
+
+# optional: also attach files to the run so you can download from the run page
+- task: PublishBuildArtifacts@1
+  displayName: "Publish run artifact $(Branch)_$(FullVersion)"
+  inputs:
+    PathtoPublish: '$(Build.ArtifactStagingDirectory)/publish'
+    ArtifactName: '$(Build.SourceBranchName)_$(FullVersion)'
+    publishLocation: Container
