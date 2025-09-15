@@ -1,0 +1,104 @@
+# quality.yaml — quality branch: Sonar (CLI env vars) + NuGet
+
+name: '$(FullVersion)'
+
+trigger:
+  branches:
+    include:
+      - quality
+
+pool:
+  name: Default
+
+variables:
+  # versioning
+  SemVerMajorMinor: '1.0'
+  SemVerPatch: $[ counter(variables['SemVerMajorMinor'], 0) ]
+  FullVersion: '$(SemVerMajorMinor).$(SemVerPatch)'
+
+  # build
+  BuildConfiguration: 'Release'
+  ProjectDir: 'hello-world-api'
+
+  # artifacts (change feed name if needed)
+  ArtifactsFeed: '$(System.TeamProject)/ADO'
+  PackageId: 'hello-world-api'
+
+  # sonar project identity (separate from main to avoid branch features)
+  SonarProjectKey: 'hello-world-api-quality'
+  SonarProjectName: 'hello-world-api (quality)'
+
+steps:
+- checkout: self
+  clean: true
+
+- task: UseDotNet@2
+  displayName: "Install .NET SDK 8.x"
+  inputs:
+    packageType: sdk
+    version: 8.x
+
+# --- SonarQube (CLI) BEGIN ---
+- bash: |
+    set -euo pipefail
+    dotnet tool update --global dotnet-sonarscanner || dotnet tool install --global dotnet-sonarscanner
+    export PATH="$HOME/.dotnet/tools:$PATH"
+    dotnet-sonarscanner begin \
+      /k:"$(SonarProjectKey)" /n:"$(SonarProjectName)" /v:"$(FullVersion)" \
+      /d:sonar.host.url="$SONAR_HOST_URL" \
+      /d:sonar.login="$SONAR_TOKEN" \
+      /d:sonar.exclusions="**/bin/**,**/obj/**"
+  env:
+    SONAR_HOST_URL: $(SONAR_HOST_URL)
+    SONAR_TOKEN: $(SONAR_TOKEN)
+  displayName: "SonarQube (CLI) - Begin"
+
+- bash: |
+    set -euo pipefail
+    dotnet restore "$(ProjectDir)"
+    dotnet build   "$(ProjectDir)" -c $(BuildConfiguration) --no-restore
+  displayName: "dotnet restore+build (within Sonar)"
+
+- bash: |
+    echo "====================================="
+    echo "Build Version: $(FullVersion)"
+    echo "====================================="
+    echo "##vso[build.updatebuildnumber]$(FullVersion)"
+  displayName: "Echo version + set build number"
+
+- bash: |
+    set -euo pipefail
+    export PATH="$HOME/.dotnet/tools:$PATH"
+    dotnet-sonarscanner end /d:sonar.login="$SONAR_TOKEN"
+  env:
+    SONAR_TOKEN: $(SONAR_TOKEN)
+  displayName: "SonarQube (CLI) - End"
+# --- SonarQube (CLI) END ---
+
+- task: NuGetAuthenticate@1
+  displayName: "Authenticate to Azure Artifacts (NuGet)"
+
+- bash: |
+    set -euo pipefail
+    CSPROJ=$(find "$(ProjectDir)" -maxdepth 1 -name "*.csproj" | head -n1)
+    dotnet pack "$CSPROJ" -c $(BuildConfiguration) \
+      -o "$(Build.ArtifactStagingDirectory)/nuget" \
+      /p:PackageId=$(PackageId) /p:PackageVersion=$(FullVersion)
+    echo "Packed nupkg(s):"
+    ls -1 "$(Build.ArtifactStagingDirectory)/nuget"
+  displayName: "dotnet pack (.nupkg)"
+
+- task: NuGetCommand@2
+  displayName: "Push .nupkg to Azure Artifacts (NuGet)"
+  inputs:
+    command: 'push'
+    packagesToPush: '$(Build.ArtifactStagingDirectory)/nuget/*.nupkg'
+    publishVstsFeed: '$(ArtifactsFeed)'
+    allowPackageConflicts: true
+
+- task: PublishBuildArtifacts@1
+  displayName: "Publish run artifact $(Build.SourceBranchName)_$(FullVersion)"
+  inputs:
+    PathtoPublish: '$(Build.ArtifactStagingDirectory)/nuget'
+    ArtifactName: '$(Build.SourceBranchName)_$(FullVersion)'
+    publishLocation: 'Container'
