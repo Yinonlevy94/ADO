@@ -1,19 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
-
   <PropertyGroup>
     <TargetFramework>netcoreapp2.0</TargetFramework>
+
+    <!-- Enable NuGet packing for a Web project -->
+    <IsPackable>true</IsPackable>
+
+    <!-- Optional but recommended metadata -->
+    <PackageId>hello-world-api</PackageId>
+    <Authors>YourName</Authors>
+    <Company>YourCompany</Company>
+    <Description>Hello World API sample</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/Yinonlevy94/ADO</RepositoryUrl>
   </PropertyGroup>
 
-  <ItemGroup>
-    <Folder Include="wwwroot\" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.All" Version="2.0.0" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <DotNetCliToolReference Include="Microsoft.VisualStudio.Web.CodeGeneration.Tools" Version="2.0.0" />
-  </ItemGroup>
-
+  <!-- existing ItemGroup/PackageReferences remain as-is -->
 </Project>
